@@ -3,9 +3,19 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import fetch from "node-fetch";
 import dotenv from "dotenv";
+import path from "path";
+import { fileURLToPath } from "url";
 
-// 環境変数を読み込む
-dotenv.config();
+// ESMでの__dirnameの代替
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// 環境変数を読み込む（ビルドディレクトリを考慮）
+dotenv.config({ path: path.resolve(__dirname, '../.env') });
+dotenv.config({ path: path.resolve(__dirname, '.env') });
+
+// デバッグモード
+const DEBUG = process.env.DEBUG === "true";
 
 // APIのベースURL
 const API_BASE_URL = "https://note.com/api";
@@ -14,48 +24,185 @@ const API_BASE_URL = "https://note.com/api";
 const NOTE_GQL_AUTH_TOKEN = process.env.NOTE_GQL_AUTH_TOKEN || "";
 const NOTE_SESSION_V5 = process.env.NOTE_SESSION_V5 || "";
 
+// 認証状態
+const AUTH_STATUS = {
+  hasCookie: NOTE_GQL_AUTH_TOKEN !== "" || NOTE_SESSION_V5 !== "",
+  anyAuth: NOTE_GQL_AUTH_TOKEN !== "" || NOTE_SESSION_V5 !== ""
+};
+
+// デバッグログ
+if (DEBUG) {
+  console.error(`Working directory: ${process.cwd()}`);
+  console.error(`Script directory: ${__dirname}`);
+  console.error(`Authentication status: Cookie=${AUTH_STATUS.hasCookie}`);
+}
+
 // MCP サーバーインスタンスを作成
 const server = new McpServer({
   name: "note-api",
   version: "1.0.0"
 });
 
+// 各種データ型の定義
+interface NoteUser {
+  id?: string;
+  nickname?: string;
+  urlname?: string;
+  bio?: string;
+  profile?: {
+    bio?: string;
+  };
+  followersCount?: number;
+  followingCount?: number;
+  notesCount?: number;
+  magazinesCount?: number;
+}
+
+interface Note {
+  id?: string;
+  name?: string;
+  key?: string;
+  body?: string;
+  user?: NoteUser;
+  publishAt?: string;
+  likeCount?: number;
+  commentsCount?: number;
+  status?: string;
+}
+
+interface Magazine {
+  id?: string;
+  name?: string;
+  key?: string;
+  description?: string;
+  user?: NoteUser;
+  publishAt?: string;
+  notesCount?: number;
+}
+
+interface Comment {
+  id?: string;
+  body?: string;
+  user?: NoteUser;
+  publishAt?: string;
+}
+
+interface Like {
+  id?: string;
+  user?: NoteUser;
+  createdAt?: string;
+}
+
 // APIレスポンスの型定義
 interface NoteApiResponse {
-  data: {
-    notes?: any[];
+  data?: {
+    notes?: Note[];
     notesCount?: number;
-    users?: any[];
+    users?: NoteUser[];
     usersCount?: number;
     contents?: any[];
     totalCount?: number;
     limit?: number;
-    magazines?: any[];
+    magazines?: Magazine[];
     magazinesCount?: number;
+    likes?: Like[];
     [key: string]: any;
   };
-  comments?: any[];
+  comments?: Comment[];
   [key: string]: any;
 }
 
+// 整形済みデータの型定義
+interface FormattedNote {
+  id: string;
+  title: string;
+  excerpt?: string;
+  body?: string;
+  user: string | {
+    id?: string;
+    name?: string;
+    nickname?: string;
+    urlname?: string;
+    bio?: string;
+  };
+  publishedAt: string;
+  likesCount: number;
+  commentsCount?: number;
+  status?: string;
+  url: string;
+}
+
+interface FormattedUser {
+  id: string;
+  nickname: string;
+  urlname: string;
+  bio: string;
+  followersCount: number;
+  followingCount: number;
+  notesCount: number;
+  magazinesCount?: number;
+  url: string;
+}
+
+interface FormattedMagazine {
+  id: string;
+  name: string;
+  description: string;
+  notesCount: number;
+  publishedAt: string;
+  user: string | {
+    id?: string;
+    nickname?: string;
+    urlname?: string;
+  };
+  url: string;
+}
+
+interface FormattedComment {
+  id: string;
+  body: string;
+  user: string | {
+    id?: string;
+    nickname?: string;
+    urlname?: string;
+  };
+  publishedAt: string;
+}
+
+interface FormattedLike {
+  id: string;
+  user: string | {
+    id?: string;
+    nickname?: string;
+    urlname?: string;
+  };
+  createdAt: string;
+}
+
 // APIリクエスト用のヘルパー関数
-async function noteApiRequest(path: string, method: string = "GET", body: any = null): Promise<NoteApiResponse> {
+async function noteApiRequest(path: string, method: string = "GET", body: any = null, requireAuth: boolean = false): Promise<NoteApiResponse> {
   const headers: { [key: string]: string } = {
     "Content-Type": "application/json",
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36"
   };
   
-  // 認証が必要なAPIリクエストにCookieを設定
-  const cookies = [];
-  if (NOTE_GQL_AUTH_TOKEN) {
-    cookies.push(`note_gql_auth_token=${NOTE_GQL_AUTH_TOKEN}`);
-  }
-  if (NOTE_SESSION_V5) {
-    cookies.push(`_note_session_v5=${NOTE_SESSION_V5}`);
-  }
-  
-  if (cookies.length > 0) {
-    headers["Cookie"] = cookies.join("; ");
+  // 認証設定
+  if (AUTH_STATUS.hasCookie) {
+    // Cookieベースの認証
+    const cookies = [];
+    if (NOTE_GQL_AUTH_TOKEN) {
+      cookies.push(`gql_auth_token=${NOTE_GQL_AUTH_TOKEN}`);
+    }
+    if (NOTE_SESSION_V5) {
+      cookies.push(`_note_session_v5=${NOTE_SESSION_V5}`);
+    }
+    
+    if (cookies.length > 0) {
+      headers["Cookie"] = cookies.join("; ");
+    }
+  } else if (requireAuth) {
+    // 認証が必要なのに認証情報がない場合
+    throw new Error("認証情報が必要です。.envファイルに認証情報を設定してください。");
   }
   
   const options: any = {
@@ -68,26 +215,45 @@ async function noteApiRequest(path: string, method: string = "GET", body: any = 
   }
   
   try {
-    console.error(`Requesting ${API_BASE_URL}${path}`); // デバッグ用ログ
+    if (DEBUG) {
+      console.error(`Requesting ${API_BASE_URL}${path}`);
+    }
+    
     const response = await fetch(`${API_BASE_URL}${path}`, options);
     
     if (!response.ok) {
-      const text = await response.text();
-      console.error(`API error: ${response.status} ${response.statusText}, Body: ${text}`);
+      let errorText = "";
+      try {
+        errorText = await response.text();
+      } catch (e) {
+        errorText = "（レスポンステキストの取得に失敗）";
+      }
+      
+      if (DEBUG) {
+        console.error(`API error: ${response.status} ${response.statusText}, Body: ${errorText}`);
+      }
+      
+      // 認証エラーの特別処理
+      if (response.status === 401 || response.status === 403) {
+        throw new Error("認証エラー: noteへのアクセス権限がありません。認証情報を確認してください。");
+      }
+      
       throw new Error(`API error: ${response.status} ${response.statusText}`);
     }
     
     const data = await response.json() as NoteApiResponse;
     return data;
   } catch (error) {
-    console.error(`Error calling note API: ${error}`);
+    if (DEBUG) {
+      console.error(`Error calling note API: ${error}`);
+    }
     throw error;
   }
 }
 
 // 認証状態を確認する関数
 function hasAuth() {
-  return NOTE_GQL_AUTH_TOKEN !== "" || NOTE_SESSION_V5 !== "";
+  return AUTH_STATUS.anyAuth;
 }
 
 // 1. 記事検索ツール
@@ -104,15 +270,18 @@ server.tool(
       const data = await noteApiRequest(`/v3/searches?context=note&q=${encodeURIComponent(query)}&size=${size}&start=${start}`);
       
       // 結果を見やすく整形
-      const formattedNotes = data.data?.notes?.map((note: any) => ({
-        id: note.id,
-        title: note.name,
-        excerpt: note.body?.substr(0, 100) + (note.body?.length > 100 ? '...' : '') || '本文なし',
-        user: note.user?.nickname || 'ユーザー不明',
-        publishedAt: note.publishAt || '日付不明',
-        likesCount: note.likeCount || 0,
-        url: `https://note.com/${note.user?.urlname || 'unknown'}/n/${note.key}`
-      })) || [];
+      let formattedNotes: FormattedNote[] = [];
+      if (data.data && data.data.notes) {
+        formattedNotes = data.data.notes.map((note: Note) => ({
+          id: note.id || "",
+          title: note.name || "",
+          excerpt: note.body ? (note.body.length > 100 ? note.body.substr(0, 100) + '...' : note.body) : '本文なし',
+          user: note.user?.nickname || 'ユーザー不明',
+          publishedAt: note.publishAt || '日付不明',
+          likesCount: note.likeCount || 0,
+          url: `https://note.com/${note.user?.urlname || 'unknown'}/n/${note.key || ''}`
+        }));
+      }
       
       return {
         content: [
@@ -151,22 +320,22 @@ server.tool(
       const data = await noteApiRequest(`/v3/notes/${noteId}`);
       
       // 結果を見やすく整形
-      const note = data.data || {};
-      const formattedNote = {
-        id: note.id,
-        title: note.name,
-        body: note.body,
+      const noteData = data.data || {};
+      const formattedNote: FormattedNote = {
+        id: noteData.id || "",
+        title: noteData.name || "",
+        body: noteData.body || "",
         user: {
-          id: note.user?.id,
-          name: note.user?.nickname,
-          urlname: note.user?.urlname,
-          bio: note.user?.bio,
+          id: noteData.user?.id || "",
+          name: noteData.user?.nickname || "",
+          urlname: noteData.user?.urlname || "",
+          bio: noteData.user?.bio || "",
         },
-        publishedAt: note.publishAt,
-        likesCount: note.likeCount,
-        commentsCount: note.commentsCount,
-        status: note.status,
-        url: `https://note.com/${note.user?.urlname || 'unknown'}/n/${note.key}`
+        publishedAt: noteData.publishAt || "",
+        likesCount: noteData.likeCount || 0,
+        commentsCount: noteData.commentsCount || 0,
+        status: noteData.status || "",
+        url: `https://note.com/${noteData.user?.urlname || 'unknown'}/n/${noteData.key || ''}`
       };
       
       return {
@@ -205,16 +374,19 @@ server.tool(
       const data = await noteApiRequest(`/v3/searches?context=user&q=${encodeURIComponent(query)}&size=${size}&start=${start}`);
       
       // 結果を見やすく整形
-      const formattedUsers = data.data?.users?.map((user: any) => ({
-        id: user.id,
-        nickname: user.nickname,
-        urlname: user.urlname,
-        bio: user.profile?.bio || '',
-        followersCount: user.followersCount || 0,
-        followingCount: user.followingCount || 0,
-        notesCount: user.notesCount || 0,
-        url: `https://note.com/${user.urlname}`
-      })) || [];
+      let formattedUsers: FormattedUser[] = [];
+      if (data.data && data.data.users) {
+        formattedUsers = data.data.users.map((user: NoteUser) => ({
+          id: user.id || "",
+          nickname: user.nickname || "",
+          urlname: user.urlname || "",
+          bio: user.profile?.bio || '',
+          followersCount: user.followersCount || 0,
+          followingCount: user.followingCount || 0,
+          notesCount: user.notesCount || 0,
+          url: `https://note.com/${user.urlname || ''}`
+        }));
+      }
       
       return {
         content: [
@@ -250,19 +422,20 @@ server.tool(
   },
   async ({ username }) => {
     try {
-      const data = await noteApiRequest(`/v3/users/${username}`);
+      const data = await noteApiRequest(`/v2/creators/${username}`);
       
       // 結果を見やすく整形
-      const user = data.data || {};
-      const formattedUser = {
-        id: user.id,
-        nickname: user.nickname,
-        urlname: user.urlname,
-        bio: user.profile?.bio || '',
-        followersCount: user.followersCount || 0,
-        followingCount: user.followingCount || 0,
-        notesCount: user.notesCount || 0,
-        url: `https://note.com/${user.urlname}`
+      const userData = data.data || {};
+      const formattedUser: FormattedUser = {
+        id: userData.id || "",
+        nickname: userData.nickname || "",
+        urlname: userData.urlname || "",
+        bio: userData.profile?.bio || '',
+        followersCount: userData.followersCount || 0,
+        followingCount: userData.followingCount || 0,
+        notesCount: userData.notesCount || 0,
+        magazinesCount: userData.magazinesCount || 0,
+        url: `https://note.com/${userData.urlname || ''}`
       };
       
       return {
@@ -278,7 +451,7 @@ server.tool(
         content: [
           {
             type: "text",
-            text: `ユーザーの取得に失敗しました: ${error}`
+            text: `ユーザー情報の取得に失敗しました: ${error}`
           }
         ],
         isError: true
@@ -300,24 +473,27 @@ server.tool(
       const data = await noteApiRequest(`/v2/creators/${username}/contents?kind=note&page=${page}`);
       
       // 結果を見やすく整形
-      const formattedNotes = data.data?.contents?.map((note: any) => ({
-        id: note.id,
-        title: note.name,
-        excerpt: note.body?.substr(0, 100) + (note.body?.length > 100 ? '...' : '') || '本文なし',
-        publishedAt: note.publishAt || '日付不明',
-        likesCount: note.likeCount || 0,
-        commentsCount: note.commentsCount || 0,
-        url: `https://note.com/${username}/n/${note.key}`
-      })) || [];
+      let formattedNotes: FormattedNote[] = [];
+      if (data.data && data.data.contents) {
+        formattedNotes = data.data.contents.map((note: Note) => ({
+          id: note.id || "",
+          title: note.name || "",
+          excerpt: note.body ? (note.body.length > 100 ? note.body.substr(0, 100) + '...' : note.body) : '本文なし',
+          publishedAt: note.publishAt || '日付不明',
+          likesCount: note.likeCount || 0,
+          commentsCount: note.commentsCount || 0,
+          user: username,
+          url: `https://note.com/${username}/n/${note.key || ''}`
+        }));
+      }
       
       return {
         content: [
           {
             type: "text",
             text: JSON.stringify({
-              username,
-              page,
-              totalPages: data.data?.totalCount && data.data?.limit ? Math.ceil(data.data.totalCount / data.data.limit) : 1,
+              total: data.data?.totalCount || 0,
+              limit: data.data?.limit || 0,
               notes: formattedNotes
             }, null, 2)
           }
@@ -337,7 +513,53 @@ server.tool(
   }
 );
 
-// 6. 記事投稿ツール（下書き保存）
+// 6. コメント一覧取得ツール
+server.tool(
+  "get-comments",
+  "記事へのコメント一覧を取得する",
+  {
+    noteId: z.string().describe("記事ID"),
+  },
+  async ({ noteId }) => {
+    try {
+      const data = await noteApiRequest(`/v1/note/${noteId}/comments`);
+      
+      // 結果を見やすく整形
+      let formattedComments: FormattedComment[] = [];
+      if (data.comments) {
+        formattedComments = data.comments.map((comment: Comment) => ({
+          id: comment.id || "",
+          body: comment.body || "",
+          user: comment.user?.nickname || "匿名ユーザー",
+          publishedAt: comment.publishAt || ""
+        }));
+      }
+      
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              comments: formattedComments
+            }, null, 2)
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `コメントの取得に失敗しました: ${error}`
+          }
+        ],
+        isError: true
+      };
+    }
+  }
+);
+
+// 7. 記事投稿ツール（下書き保存）
 server.tool(
   "post-draft-note",
   "下書き状態の記事を投稿する",
@@ -355,7 +577,7 @@ server.tool(
           content: [
             {
               type: "text",
-              text: "認証情報がないため、投稿できません。NOTE_GQL_AUTH_TOKEN または NOTE_SESSION_V5 環境変数を設定してください。"
+              text: "認証情報がないため、投稿できません。.envファイルに認証情報を設定してください。"
             }
           ],
           isError: true
@@ -372,7 +594,7 @@ server.tool(
         ? `/v1/text_notes/draft_save?id=${id}`
         : "/v1/text_notes/draft_save";
       
-      const data = await noteApiRequest(endpoint, "POST", postData);
+      const data = await noteApiRequest(endpoint, "POST", postData, true);
       
       return {
         content: [
@@ -388,55 +610,6 @@ server.tool(
           {
             type: "text",
             text: `記事の投稿に失敗しました: ${error}`
-          }
-        ],
-        isError: true
-      };
-    }
-  }
-);
-
-// 7. コメント取得ツール
-server.tool(
-  "get-comments",
-  "記事へのコメント一覧を取得する",
-  {
-    noteId: z.string().describe("記事ID"),
-  },
-  async ({ noteId }) => {
-    try {
-      const data = await noteApiRequest(`/v1/note/${noteId}/comments`);
-      
-      // 結果を見やすく整形
-      const formattedComments = data.comments?.map((comment: any) => ({
-        id: comment.id,
-        text: comment.text,
-        createdAt: comment.created_at,
-        user: {
-          id: comment.user.id,
-          nickname: comment.user.nickname,
-          urlname: comment.user.urlname
-        }
-      })) || [];
-      
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify({
-              noteId,
-              totalComments: formattedComments.length,
-              comments: formattedComments
-            }, null, 2)
-          }
-        ]
-      };
-    } catch (error) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: `コメントの取得に失敗しました: ${error}`
           }
         ],
         isError: true
@@ -461,14 +634,14 @@ server.tool(
           content: [
             {
               type: "text",
-              text: "認証情報がないため、コメントできません。NOTE_GQL_AUTH_TOKEN または NOTE_SESSION_V5 環境変数を設定してください。"
+              text: "認証情報がないため、コメントできません。.envファイルに認証情報を設定してください。"
             }
           ],
           isError: true
         };
       }
       
-      const data = await noteApiRequest(`/v1/note/${noteId}/comments`, "POST", { text });
+      const data = await noteApiRequest(`/v1/note/${noteId}/comments`, "POST", { text }, true);
       
       return {
         content: [
@@ -492,10 +665,10 @@ server.tool(
   }
 );
 
-// 9. いいね取得ツール
+// 9. スキ取得ツール
 server.tool(
   "get-likes",
-  "記事のいいね一覧を取得する",
+  "記事のスキ一覧を取得する",
   {
     noteId: z.string().describe("記事ID"),
   },
@@ -504,23 +677,20 @@ server.tool(
       const data = await noteApiRequest(`/v3/notes/${noteId}/likes`);
       
       // 結果を見やすく整形
-      const formattedLikes = data.data?.likes?.map((like: any) => ({
-        id: like.id,
-        createdAt: like.createdAt,
-        user: {
-          id: like.user?.id,
-          nickname: like.user?.nickname,
-          urlname: like.user?.urlname
-        }
-      })) || [];
+      let formattedLikes: FormattedLike[] = [];
+      if (data.data && data.data.likes) {
+        formattedLikes = data.data.likes.map((like: Like) => ({
+          id: like.id || "",
+          createdAt: like.createdAt || "",
+          user: like.user?.nickname || "匿名ユーザー"
+        }));
+      }
       
       return {
         content: [
           {
             type: "text",
             text: JSON.stringify({
-              noteId,
-              totalLikes: formattedLikes.length,
               likes: formattedLikes
             }, null, 2)
           }
@@ -531,7 +701,7 @@ server.tool(
         content: [
           {
             type: "text",
-            text: `いいね一覧の取得に失敗しました: ${error}`
+            text: `スキ一覧の取得に失敗しました: ${error}`
           }
         ],
         isError: true
@@ -540,10 +710,10 @@ server.tool(
   }
 );
 
-// 10. いいねをつけるツール
+// 10. スキをつけるツール
 server.tool(
   "like-note",
-  "記事にいいねをする",
+  "記事にスキをする",
   {
     noteId: z.string().describe("記事ID"),
   },
@@ -555,20 +725,20 @@ server.tool(
           content: [
             {
               type: "text",
-              text: "認証情報がないため、いいねできません。NOTE_GQL_AUTH_TOKEN または NOTE_SESSION_V5 環境変数を設定してください。"
+              text: "認証情報がないため、スキできません。.envファイルに認証情報を設定してください。"
             }
           ],
           isError: true
         };
       }
       
-      const data = await noteApiRequest(`/v3/notes/${noteId}/likes`, "POST");
+      const data = await noteApiRequest(`/v3/notes/${noteId}/likes`, "POST", {}, true);
       
       return {
         content: [
           {
             type: "text",
-            text: "いいねをつけました"
+            text: "スキをつけました"
           }
         ]
       };
@@ -577,7 +747,7 @@ server.tool(
         content: [
           {
             type: "text",
-            text: `いいねに失敗しました: ${error}`
+            text: `スキに失敗しました: ${error}`
           }
         ],
         isError: true
@@ -586,10 +756,10 @@ server.tool(
   }
 );
 
-// 11. いいねを削除するツール
+// 11. スキを削除するツール
 server.tool(
   "unlike-note",
-  "記事のいいねを削除する",
+  "記事のスキを削除する",
   {
     noteId: z.string().describe("記事ID"),
   },
@@ -601,20 +771,20 @@ server.tool(
           content: [
             {
               type: "text",
-              text: "認証情報がないため、いいねの削除ができません。NOTE_GQL_AUTH_TOKEN または NOTE_SESSION_V5 環境変数を設定してください。"
+              text: "認証情報がないため、スキの削除ができません。.envファイルに認証情報を設定してください。"
             }
           ],
           isError: true
         };
       }
       
-      const data = await noteApiRequest(`/v3/notes/${noteId}/likes`, "DELETE");
+      const data = await noteApiRequest(`/v3/notes/${noteId}/likes`, "DELETE", {}, true);
       
       return {
         content: [
           {
             type: "text",
-            text: "いいねを削除しました"
+            text: "スキを削除しました"
           }
         ]
       };
@@ -623,7 +793,7 @@ server.tool(
         content: [
           {
             type: "text",
-            text: `いいねの削除に失敗しました: ${error}`
+            text: `スキの削除に失敗しました: ${error}`
           }
         ],
         isError: true
@@ -646,14 +816,18 @@ server.tool(
       const data = await noteApiRequest(`/v3/searches?context=magazine&q=${encodeURIComponent(query)}&size=${size}&start=${start}`);
       
       // 結果を見やすく整形
-      const formattedMagazines = data.data?.magazines?.map((magazine: any) => ({
-        id: magazine.id,
-        name: magazine.name,
-        description: magazine.description || '',
-        user: magazine.user?.nickname || 'ユーザー不明',
-        notesCount: magazine.notesCount || 0,
-        url: `https://note.com/m/${magazine.urlname}`
-      })) || [];
+      let formattedMagazines: FormattedMagazine[] = [];
+      if (data.data && data.data.magazines) {
+        formattedMagazines = data.data.magazines.map((magazine: Magazine) => ({
+          id: magazine.id || "",
+          name: magazine.name || "",
+          description: magazine.description || "",
+          notesCount: magazine.notesCount || 0,
+          publishedAt: magazine.publishAt || "",
+          user: magazine.user?.nickname || "匿名ユーザー",
+          url: `https://note.com/${magazine.user?.urlname || ''}/m/${magazine.key || ''}`
+        }));
+      }
       
       return {
         content: [
@@ -685,25 +859,22 @@ server.tool(
   "get-magazine",
   "マガジンの詳細情報を取得する",
   {
-    magazineId: z.string().describe("マガジンID（例: m4f0c7b884789）"),
+    magazineId: z.string().describe("マガジンID（例: m75081e161aeb）"),
   },
   async ({ magazineId }) => {
     try {
-      const data = await noteApiRequest(`/v3/magazines/${magazineId}`);
+      const data = await noteApiRequest(`/v1/magazines/${magazineId}`);
       
       // 結果を見やすく整形
-      const magazine = data.data || {};
-      const formattedMagazine = {
-        id: magazine.id,
-        name: magazine.name,
-        description: magazine.description || '',
-        user: {
-          id: magazine.user?.id,
-          name: magazine.user?.nickname,
-          urlname: magazine.user?.urlname,
-        },
-        notesCount: magazine.notesCount || 0,
-        url: `https://note.com/m/${magazine.urlname}`
+      const magazineData = data.data || {};
+      const formattedMagazine: FormattedMagazine = {
+        id: magazineData.id || "",
+        name: magazineData.name || "",
+        description: magazineData.description || "",
+        notesCount: magazineData.notesCount || 0,
+        publishedAt: magazineData.publishAt || "",
+        user: magazineData.user?.nickname || "匿名ユーザー",
+        url: `https://note.com/${magazineData.user?.urlname || ''}/m/${magazineData.key || ''}`
       };
       
       return {
@@ -735,21 +906,28 @@ server.tool(
   {
     category: z.string().describe("カテゴリー名（例: tech）"),
     page: z.number().default(1).describe("ページ番号"),
+    sort: z.enum(["new", "trend"]).default("new").describe("ソート方法（new: 新着順, trend: 人気順）"),
   },
-  async ({ category, page }) => {
+  async ({ category, page, sort }) => {
     try {
-      const data = await noteApiRequest(`/v3/categories/${category}/notes?page=${page}`);
+      const data = await noteApiRequest(`/v1/categories/${category}?note_intro_only=true&sort=${sort}&page=${page}`);
       
       // 結果を見やすく整形
-      const formattedNotes = data.data?.notes?.map((note: any) => ({
-        id: note.id,
-        title: note.name,
-        excerpt: note.body?.substr(0, 100) + (note.body?.length > 100 ? '...' : '') || '本文なし',
-        user: note.user?.nickname || 'ユーザー不明',
-        publishedAt: note.publishAt || '日付不明',
-        likesCount: note.likeCount || 0,
-        url: `https://note.com/${note.user?.urlname || 'unknown'}/n/${note.key}`
-      })) || [];
+      let formattedNotes: FormattedNote[] = [];
+      if (data.data && data.data.notes) {
+        formattedNotes = data.data.notes.map((note: Note) => ({
+          id: note.id || "",
+          title: note.name || "",
+          excerpt: note.body ? (note.body.length > 100 ? note.body.substr(0, 100) + '...' : note.body) : '本文なし',
+          user: {
+            nickname: note.user?.nickname || "",
+            urlname: note.user?.urlname || ""
+          },
+          publishedAt: note.publishAt || '日付不明',
+          likesCount: note.likeCount || 0,
+          url: `https://note.com/${note.user?.urlname || ''}/n/${note.key || ''}`
+        }));
+      }
       
       return {
         content: [
@@ -768,7 +946,7 @@ server.tool(
         content: [
           {
             type: "text",
-            text: `カテゴリー記事一覧の取得に失敗しました: ${error}`
+            text: `カテゴリー記事の取得に失敗しました: ${error}`
           }
         ],
         isError: true
@@ -794,14 +972,14 @@ server.tool(
           content: [
             {
               type: "text",
-              text: "認証情報がないため、統計情報を取得できません。NOTE_GQL_AUTH_TOKEN または NOTE_SESSION_V5 環境変数を設定してください。"
+              text: "認証情報がないため、統計情報を取得できません。.envファイルに認証情報を設定してください。"
             }
           ],
           isError: true
         };
       }
       
-      const data = await noteApiRequest(`/v1/stats/pv?filter=${filter}&page=${page}&sort=${sort}`);
+      const data = await noteApiRequest(`/v1/stats/pv?filter=${filter}&page=${page}&sort=${sort}`, "GET", null, true);
       
       return {
         content: [
@@ -896,16 +1074,23 @@ server.prompt(
 
 // サーバーの起動
 async function main() {
-  // STDIOトランスポートを作成して接続
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  console.error("note API MCP Server is running on stdio transport");
-  
-  // 認証状態を表示
-  if (hasAuth()) {
-    console.error("認証情報が設定されています。認証が必要な機能も利用できます。");
-  } else {
-    console.error("警告: 認証情報が設定されていません。一部の機能は利用できません。");
+  try {
+    // STDIOトランスポートを作成して接続
+    const transport = new StdioServerTransport();
+    console.error("Starting note API MCP Server...");
+    await server.connect(transport);
+    console.error("note API MCP Server is running on stdio transport");
+    
+    // 認証状態を表示
+    if (hasAuth()) {
+      console.error("認証情報が設定されています。認証が必要な機能も利用できます。");
+    } else {
+      console.error("警告: 認証情報が設定されていません。読み取り機能のみ利用可能です。");
+      console.error("投稿、コメント、スキなどの機能を使うには.envファイルに認証情報を設定してください。");
+    }
+  } catch (error) {
+    console.error("Fatal error during server startup:", error);
+    process.exit(1);
   }
 }
 
