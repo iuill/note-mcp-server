@@ -38,9 +38,9 @@
 
 ### インストール手順
 
-1. このリポジトリをクローンまたはダウンロードする
+1. このリポジトリをクローンする
    ```
-   git clone https://github.com/yourusername/note-mcp-server.git
+   git clone https://github.com/shimayuz/note-mcp-server.git
    cd note-mcp-server
    ```
 
@@ -49,20 +49,13 @@
    npm install
    ```
 
-3. ソースファイルをsrcディレクトリに移動（既にsrcディレクトリにある場合は不要）
-   ```
-   mkdir -p src
-   mv note-mcp-server.ts src/
-   ```
-
-4. `.env.example`ファイルをコピーして`.env`ファイルを作成
+3. 環境設定ファイルを作成
    ```
    cp .env.example .env
    ```
+   作成した`.env`ファイルを編集し、必要に応じて認証情報を設定します（認証情報の設定方法については後述）
 
-5. 必要に応じて、`.env`ファイルを編集して認証情報を設定（後述）
-
-6. TypeScriptをビルド
+4. TypeScriptをビルド
    ```
    npm run build
    ```
