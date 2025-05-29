@@ -14,6 +14,7 @@
 - マガジンの検索と閲覧
 - カテゴリー記事の閲覧
 - PV統計情報の取得
+- メンバーシップ情報の取得と閲覧
 - コンテンツアイデアの生成と競合分析
 
 ## 認証について
@@ -24,6 +25,7 @@
 - コメント投稿
 - スキをつける/削除する
 - PV統計情報の取得
+- メンバーシップ情報の取得
 
 ## セットアップ
 
@@ -65,19 +67,35 @@
    npm run build
    ```
 
-### 認証情報の取得方法
+### 認証情報の設定方法
 
-投稿やスキなどの機能を使うには、以下の手順でCookieを取得してください：
+投稿やスキ、メンバーシップ情報取得などの機能を使うには、以下のいずれかの方法で認証情報を設定します：
+
+#### 方法１：メールアドレスとパスワードによる認証（推奨）
+
+`.env`ファイルにあなたのnote.comアカウントのメールアドレスとパスワードを設定します：
+
+```
+NOTE_EMAIL=note.comのメールアドレス
+NOTE_PASSWORD=note.comのパスワード
+NOTE_USER_ID=自分のnote.comのID（ログイン後のページnote.com/{userID}/で確認できます）
+```
+
+この方法のメリットは、Cookieのように期限切れしないことです。サーバー起動時に自動的に認証されます。
+
+#### 方法２：Cookieベースの認証（代替方法）
+
+以下の手順でCookieを取得してください：
 
 1. ブラウザでnote.comにログインする
 2. ブラウザの開発者ツール（F12）を開く
 3. アプリケーションタブ（Application）を選択
 4. 左側のメニューからCookies→「https://note.com」を選択
 5. 以下のCookie値をコピーして`.env`ファイルに設定：
-   - `note_gql_auth_token`
    - `_note_session_v5`（先頭のアンダースコアに注意）
+   - `note_xsrf_token`（必要に応じて）
 
-**注意**: どちらか一方のCookieだけでも多くの認証機能は動作しますが、両方設定するとより安定します。
+**注意**: Cookie認証は有効期限があるため、定期的に更新する必要があります。
 
 ### Claude Desktopとの連携
 
@@ -95,18 +113,20 @@
     "note-api": {
       "command": "node",
       "args": [
-        "/Users/heavenlykiss0820/noteMCP/build/note-mcp-server.js"
+        "/path/to/noteMCP/build/note-mcp-server.js"
       ],
       "env": {
-        "NOTE_GQL_AUTH_TOKEN": "あなたのトークン",
-        "NOTE_SESSION_V5": "あなたのセッションv5トークン"
+        "NOTE_EMAIL": "note.comのメールアドレス",
+        "NOTE_PASSWORD": "note.comのパスワード",
+        "NOTE_USER_ID": "あなたのuser ID",
+        "DEBUG": "true"
       }
     }
   }
 }
 ```
 
-認証が不要な場合（検索・閲覧のみ）は、`env`部分は省略できます：
+または、Cookie認証を利用する場合は以下のように設定します(非推奨)
 
 ```json
 {
@@ -114,7 +134,27 @@
     "note-api": {
       "command": "node",
       "args": [
-        "/Users/heavenlykiss0820/noteMCP/build/note-mcp-server.js"
+        "/path/to/noteMCP/build/note-mcp-server.js"
+      ],
+      "env": {
+        "NOTE_SESSION_V5": "あなたのセッションv5トークン",
+        "NOTE_XSRF_TOKEN": "あなたのxsrfトークン",
+        "DEBUG": "true"
+      }
+    }
+  }
+}
+```
+
+認証が不要な場合（検索・閲覧のみ）は、`env`部分は省略できます。
+
+```json
+{
+  "mcpServers": {
+    "note-api": {
+      "command": "node",
+      "args": [
+        "/path/to/noteMCP/build/note-mcp-server.js"
       ]
     }
   }
@@ -166,14 +206,10 @@
 ### 統計（認証必須）
 - **get-stats**: PV統計情報を取得
 
-## プロンプトテンプレート
-
-このサーバーには以下のプロンプトテンプレートも含まれています：
-
-- **note-search**: noteでキーワード検索し記事を要約
-- **competitor-analysis**: 競合ユーザーの分析
-- **content-idea-generation**: 指定トピックの記事アイデア生成
-- **article-analysis**: 指定記事の文章や構成の分析
+### メンバーシップ関連（認証必須）
+- **get-membership-summaries**: 加入済みメンバーシップ一覧を取得
+- **get-membership-plans**: メンバーシッププラン情報を取得
+- **get-membership-notes**: メンバーシップの記事一覧を取得
 
 ## トラブルシューティング
 
