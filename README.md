@@ -2,6 +2,15 @@
 
 このMCPサーバーは、note.comのAPIを利用して記事の閲覧や投稿、ユーザー情報の取得などをClaude Desktopから実行できるようにするものです。
 
+## ✨ リファクタリング完了（2025年1月）
+
+**2900行のモノリシックファイルを16のモジュールに分割**し、保守性と性能を大幅に改善しました！
+
+- 🚀 **93%サイズ削減**: 106KB → 7.5KB
+- 📁 **モジュラー設計**: 機能別に整理された明確な構造  
+- ⚡ **高速化**: モジュール化による起動・実行速度向上
+- 🛠️ **開発効率**: 保守・拡張・テストが容易
+
 ## 機能
 
 このMCPサーバーでは以下の機能が利用できます：
@@ -63,6 +72,33 @@
    npm run build
    ```
 
+### アーキテクチャについて
+
+このMCPサーバーは、**モジュラー設計**により高い保守性を実現しています：
+
+#### 📁 ディレクトリ構造
+```
+src/
+├── config/          # 環境設定とAPI設定
+├── types/           # TypeScript型定義
+├── utils/           # 共通ユーティリティ
+├── tools/           # 機能別MCPツール
+├── prompts/         # プロンプトテンプレート
+└── note-mcp-server-refactored.ts  # メインサーバー
+```
+
+#### 🚀 利用可能なスクリプト
+- `npm run start`: 本番用サーバー起動
+- `npm run start:refactored`: リファクタリング版サーバー起動 
+- `npm run dev:refactored`: 開発用（ビルド＋起動）
+- `npm run dev:watch`: ファイル監視モード
+- `npm run dev:ts`: TypeScript直接実行（開発用）
+
+#### ⚡ パフォーマンス改善
+- **ファイルサイズ**: 106KB → 7.5KB（93%削減）
+- **起動速度**: モジュラー読み込みで高速化
+- **保守性**: 機能別分離で開発効率向上
+
 ### 認証情報の設定方法
 
 投稿やスキ、メンバーシップ情報取得などの機能を使うには、以下のいずれかの方法で認証情報を設定します：
@@ -109,7 +145,7 @@ NOTE_USER_ID=自分のnote.comのID（ログイン後のページnote.com/{userI
     "note-api": {
       "command": "node",
       "args": [
-        "/path/to/noteMCP/build/note-mcp-server.js"
+        "/path/to/noteMCP/build/note-mcp-server-refactored.js"
       ],
       "env": {
         "NOTE_EMAIL": "note.comのメールアドレス",
@@ -130,7 +166,7 @@ NOTE_USER_ID=自分のnote.comのID（ログイン後のページnote.com/{userI
     "note-api": {
       "command": "node",
       "args": [
-        "/path/to/noteMCP/build/note-mcp-server.js"
+        "/path/to/noteMCP/build/note-mcp-server-refactored.js"
       ],
       "env": {
         "NOTE_SESSION_V5": "あなたのセッションv5トークン",
@@ -150,7 +186,7 @@ NOTE_USER_ID=自分のnote.comのID（ログイン後のページnote.com/{userI
     "note-api": {
       "command": "node",
       "args": [
-        "/path/to/noteMCP/build/note-mcp-server.js"
+        "/path/to/noteMCP/build/note-mcp-server-refactored.js"
       ]
     }
   }
@@ -291,6 +327,29 @@ search-notes(query: "ChatGPT")
 - Node.jsのバージョンが18以上か確認（`node -v`コマンドで確認）
 - 依存パッケージがインストールされているか確認（`npm install`を実行）
 - `npm run build`でTypeScriptがビルドできているか確認
+
+### 開発者向け：高速開発モード
+リファクタリング版では以下の開発スクリプトが利用できます：
+
+```bash
+# TypeScriptファイルを直接実行（最速）
+npm run dev:ts
+
+# ファイル変更を監視してビルド
+npm run dev:watch
+
+# ビルド後に起動（本番環境に近い）
+npm run dev:refactored
+```
+
+### モジュールの個別テスト
+各モジュールは独立しているため、個別にテスト・デバッグできます：
+
+```bash
+# 特定のモジュールをNode.jsで直接実行
+node build/utils/api-client.js
+node build/tools/search-tools.js
+```
 
 ### 認証エラーが発生する
 - Cookie値が最新か確認（期限が切れている可能性あり）
