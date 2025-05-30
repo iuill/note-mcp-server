@@ -7,7 +7,11 @@
   "scripts": {
     "build": "tsc",
     "start": "node build/note-mcp-server.js",
-    "dev": "ts-node --esm src/note-mcp-server.ts"
+    "start:refactored": "node build/note-mcp-server-refactored.js",
+    "dev": "npm run build && npm run start",
+    "dev:refactored": "npm run build && npm run start:refactored",
+    "dev:watch": "tsc --watch",
+    "dev:ts": "node --loader ts-node/esm --experimental-specifier-resolution=node --project tsconfig-dev.json src/note-mcp-server-refactored.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.7.0",
