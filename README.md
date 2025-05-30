@@ -2,12 +2,12 @@
 
 このMCPサーバーは、note.comのAPIを利用して記事の閲覧や投稿、ユーザー情報の取得などをClaude Desktopから実行できるようにするものです。
 
-## ✨ リファクタリング完了（2025年1月）
+## ✨ リファクタリング完了（2025年5月29日）
 
 **2900行のモノリシックファイルを16のモジュールに分割**し、保守性と性能を大幅に改善しました！
 
 - 🚀 **93%サイズ削減**: 106KB → 7.5KB
-- 📁 **モジュラー設計**: 機能別に整理された明確な構造  
+- 📁 **モジュラー設計**: 機能別に整理された明確な構造 
 - ⚡ **高速化**: モジュール化による起動・実行速度向上
 - 🛠️ **開発効率**: 保守・拡張・テストが容易
 
@@ -39,6 +39,8 @@
 - PV統計情報の取得
 - メンバーシップ情報の取得
 
+認証情報は、プロジェクトルートに作成する `.env` ファイルに設定します。`.env.example` ファイルをテンプレートとして使用し、ご自身の情報を入力してください。この `.env` ファイルは `.gitignore` によりリポジトリには含まれないため、安全に認証情報を管理できます。
+
 ## セットアップ
 
 ### 必要なもの
@@ -50,27 +52,32 @@
 
 ### インストール手順
 
-1. このリポジトリをクローンする
-   ```
-   git clone https://github.com/shimayuz/note-mcp-server.git
-   cd note-mcp-server
+1. このリポジトリをクローンします:
+   ```bash
+   git clone https://github.com/shimayuz/note-mcp-server.git <お好きなディレクトリ名>
+   cd <お好きなディレクトリ名>
    ```
 
-2. 依存パッケージをインストール
-   ```
+2. 依存パッケージをインストールします:
+   ```bash
    npm install
    ```
 
-3. 環境設定ファイルを作成
-   ```
+3. 環境設定ファイルを作成します:
+   プロジェクトルートにある `.env.example` ファイルをコピーして `.env` という名前のファイルを作成します。
+   ```bash
    cp .env.example .env
    ```
-   作成した`.env`ファイルを編集し、必要に応じて認証情報を設定します（認証情報の設定方法については後述）
+   作成した `.env` ファイルを開き、あなたのnote.comの認証情報を設定してください。
+   詳細は「認証情報の設定方法」セクションおよび `.env.example` ファイル内のコメントを参照してください。
 
-4. TypeScriptをビルド
-   ```
+   **重要**: `.env` ファイルは `.gitignore` によってGitの追跡対象から除外されています。そのため、あなたの個人的な認証情報が誤ってリポジトリにコミットされることはありません。ローカル環境で安全に管理してください。
+
+4. TypeScriptをビルドします（本番環境で `npm run start` を使用する場合）:
+   ```bash
    npm run build
    ```
+   開発時には `npm run dev` を使用することで、ビルドなしで直接TypeScriptを実行できます。
 
 ### アーキテクチャについて
 
@@ -101,33 +108,31 @@ src/
 
 ### 認証情報の設定方法
 
-投稿やスキ、メンバーシップ情報取得などの機能を使うには、以下のいずれかの方法で認証情報を設定します：
+投稿やスキ、メンバーシップ情報取得などの機能を使うには、プロジェクトルートの `.env` ファイルに認証情報を設定します。`.env.example` を参考に、以下のいずれかの方法で設定してください。
 
 #### 方法１：メールアドレスとパスワードによる認証（推奨）
 
-`.env`ファイルにあなたのnote.comアカウントのメールアドレスとパスワードを設定します：
+`.env`ファイルにあなたのnote.comアカウントのメールアドレスとパスワード、およびユーザーIDを設定します：
 
-```
-NOTE_EMAIL=note.comのメールアドレス
-NOTE_PASSWORD=note.comのパスワード
-NOTE_USER_ID=自分のnote.comのID（ログイン後のページnote.com/{userID}/で確認できます）
+```env
+NOTE_EMAIL=your_email@example.com
+NOTE_PASSWORD=your_password
+NOTE_USER_ID=your_note_user_id
 ```
 
-この方法のメリットは、Cookieのように期限切れしないことです。サーバー起動時に自動的に認証されます。
+この方法のメリットは、Cookieのように期限切れの心配が少ないことです。サーバー起動時に自動的に認証されます。
 
 #### 方法２：Cookieベースの認証（代替方法）
 
-以下の手順でCookieを取得してください：
+ブラウザの開発者ツールなどを使用して、note.comにログインした際のCookie情報を取得し、`.env`ファイルに設定します：
 
-1. ブラウザでnote.comにログインする
-2. ブラウザの開発者ツール（F12）を開く
-3. アプリケーションタブ（Application）を選択
-4. 左側のメニューからCookies→「https://note.com」を選択
-5. 以下のCookie値をコピーして`.env`ファイルに設定：
-   - `_note_session_v5`（先頭のアンダースコアに注意）
-   - `note_xsrf_token`（必要に応じて）
+```env
+NOTE_SESSION_V5=your_session_v5_cookie_value
+NOTE_XSRF_TOKEN=your_xsrf_token_cookie_value
+NOTE_USER_ID=your_note_user_id
+```
 
-**注意**: Cookie認証は有効期限があるため、定期的に更新する必要があります。
+**注意**: Cookie認証は有効期限があるため、定期的な更新が必要になる場合があります。
 
 ### Claude Desktopとの連携
 
@@ -137,61 +142,39 @@ NOTE_USER_ID=自分のnote.comのID（ログイン後のページnote.com/{userI
    - macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
    - Windows: `%APPDATA%\Claude\claude_desktop_config.json`
 
-3. 設定ファイルに以下の内容を追加（パスは実際のパスに変更してください）:
+3. 設定ファイルに以下の内容を追加（`cwd` のパスは実際のプロジェクトの場所に置き換えてください）:
 
-```json
-{
-  "mcpServers": {
-    "note-api": {
-      "command": "node",
-      "args": [
-        "/path/to/noteMCP/build/note-mcp-server-refactored.js"
-      ],
-      "env": {
-        "NOTE_EMAIL": "note.comのメールアドレス",
-        "NOTE_PASSWORD": "note.comのパスワード",
-        "NOTE_USER_ID": "あなたのuser ID",
-        "DEBUG": "true"
-      }
-    }
-  }
-}
-```
+   開発用（`npm run dev` を使用し、プロジェクトルートの `.env` ファイルを自動で読み込む場合）:
+   ```json
+   {
+     "mcpServers": {
+       "noteMCP_dev": {
+         "command": "npm",
+         "args": ["run", "dev"],
+         "cwd": "/path/to/your/note-mcp-server", // あなたがクローンしたプロジェクトのルートパス
+         "mcp_version": "0.0.1"
+       }
+     }
+   }
+   ```
 
-または、Cookie認証を利用する場合は以下のように設定します(非推奨)
-
-```json
-{
-  "mcpServers": {
-    "note-api": {
-      "command": "node",
-      "args": [
-        "/path/to/noteMCP/build/note-mcp-server-refactored.js"
-      ],
-      "env": {
-        "NOTE_SESSION_V5": "あなたのセッションv5トークン",
-        "NOTE_XSRF_TOKEN": "あなたのxsrfトークン",
-        "DEBUG": "true"
-      }
-    }
-  }
-}
-```
-
-認証が不要な場合（検索・閲覧のみ）は、`env`部分は省略できます。
-
-```json
-{
-  "mcpServers": {
-    "note-api": {
-      "command": "node",
-      "args": [
-        "/path/to/noteMCP/build/note-mcp-server-refactored.js"
-      ]
-    }
-  }
-}
-```
+   本番用（`npm run start` を使用し、ビルドされたファイルを実行する場合。同様に `.env` を読み込みます）:
+   ```json
+   {
+     "mcpServers": {
+       "noteMCP": {
+         "command": "npm",
+         "args": ["run", "start"],
+         "cwd": "/path/to/your/note-mcp-server", // あなたがクローンしたプロジェクトのルートパス
+         "mcp_version": "0.0.1"
+       }
+     }
+   }
+   ```
+   **注意**: 
+   - 上記の `/path/to/your/note-mcp-server` は、あなたがこのプロジェクトをクローンした実際の絶対パスに置き換えてください。
+   - この設定により、サーバーはプロジェクトルートの `.env` ファイルから環境変数を読み込みます。Claude Desktopの設定ファイル内で直接 `env` ブロックに認証情報を記述する必要はありません。
+   - もし特定の環境変数をClaude Desktop側から上書きしたい場合は、`env` ブロックを追加することも可能です。
 
 4. Claude Desktopを再起動
 
@@ -323,42 +306,50 @@ search-notes(query: "ChatGPT")
 ## トラブルシューティング
 
 ### サーバーが起動しない
-- `.env`ファイルが正しく設定されているか確認
-- Node.jsのバージョンが18以上か確認（`node -v`コマンドで確認）
-- 依存パッケージがインストールされているか確認（`npm install`を実行）
-- `npm run build`でTypeScriptがビルドできているか確認
+- `.env`ファイルが正しく作成され、設定されているか確認してください。`.env.example` をコピーして `.env` を作成し、必要な認証情報が入力されているか確認します。
+- Node.jsのバージョンが18以上か確認してください（`node -v`コマンドで確認）。
+- 依存パッケージがインストールされているか確認してください（`npm install`を実行）。
+- `npm run build`でTypeScriptが正しくビルドできているか確認してください（`npm run start` で本番用サーバーを起動する場合）。
+
+### 認証エラーが発生する
+- `.env` ファイルに設定した認証情報（メールアドレス/パスワード、またはCookie値、ユーザーID）が正しいか、最新か確認してください。
+- Cookie認証の場合、有効期限が切れている可能性があります。
+- 認証が必要な機能であるか確認してください。
+
+### APIエラーが発生する
+- note.comのAPI仕様が変更された可能性があります。
+- 最新版のサーバーコードを確認するか、エラーが発生した箇所のコードを見直してください。
+
+### デバッグログを確認したい
+- デバッグログを有効にするには、プロジェクトルートにある `.env` ファイルに以下の行を追記してください:
+  ```env
+  DEBUG=true
+  ```
+- `.env` ファイルが存在しない場合は、上記のインストール手順に従い `.env.example` から作成してください。
 
 ### 開発者向け：高速開発モード
 リファクタリング版では以下の開発スクリプトが利用できます：
 
 ```bash
-# TypeScriptファイルを直接実行（最速）
-npm run dev:ts
+# TypeScriptファイルを直接実行（ビルド不要、最速）
+npm run dev
 
-# ファイル変更を監視してビルド
-npm run dev:watch
+# ファイル変更を監視して自動的に再ビルド・再起動（開発時に便利）
+npm run dev:watch 
 
-# ビルド後に起動（本番環境に近い）
-npm run dev:refactored
+# 本番用にビルドして起動
+npm run start
 ```
 
 ### モジュールの個別テスト
-各モジュールは独立しているため、個別にテスト・デバッグできます：
+各モジュールは独立しているため、個別にテスト・デバッグできます（パスは適宜調整してください）：
 
 ```bash
-# 特定のモジュールをNode.jsで直接実行
-node build/utils/api-client.js
+# 特定のモジュールをNode.jsで直接実行（ビルド後）
+node build/utils/api-client.js 
 node build/tools/search-tools.js
 ```
 
-### 認証エラーが発生する
-- Cookie値が最新か確認（期限が切れている可能性あり）
-- 両方のCookie値（`note_gql_auth_token`と`_note_session_v5`）を設定してみる
-- 認証が必要な機能か確認
-
-### APIエラーが発生する
-- note.comの仕様変更の可能性があります
-- 最新版のサーバーを入手するか、エラーが発生した部分のコードを確認・修正してください
 
 ## 注意事項
 
