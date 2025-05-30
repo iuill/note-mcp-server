@@ -4,7 +4,7 @@
 
 ## ✨ リファクタリング完了（2025年5月30日）
 
-**2900行のモノリシックファイルを16のモジュールに分割**し、保守性と性能を大幅に改善しました！
+**2900行のモノリシックファイルを16のモジュールに分割**し、保守性と性能を大幅に改善しました。
 
 - 🚀 **93%サイズ削減**: 106KB → 7.5KB
 - 📁 **モジュラー設計**: 機能別に整理された明確な構造 
@@ -13,7 +13,7 @@
 
 ## 機能
 
-このMCPサーバーでは以下の機能が利用できます：
+このMCPサーバーでは以下の機能が利用できます。
 
 - 記事の検索と閲覧（新着順・人気順・急上昇でのソートに対応）
 - ユーザーやハッシュタグを含めたnote全体検索
@@ -73,11 +73,11 @@
 
    **重要**: `.env` ファイルは `.gitignore` によってGitの追跡対象から除外されています。そのため、あなたの個人的な認証情報が誤ってリポジトリにコミットされることはありません。ローカル環境で安全に管理してください。
 
-4. TypeScriptをビルドします（本番環境で `npm run start` を使用する場合）:
+4. サーバーをビルドして起動します:
    ```bash
-   npm run build
+   npm run build && npm run start
    ```
-   開発時には `npm run dev` を使用することで、ビルドなしで直接TypeScriptを実行できます。
+   このコマンドでTypeScriptコードをビルドし、サーバーを起動します。
 
 ### アーキテクチャについて
 
@@ -122,9 +122,8 @@ NOTE_USER_ID=your_note_user_id
 
 この方法のメリットは、Cookieのように期限切れの心配が少ないことです。サーバー起動時に自動的に認証されます。
 
-#### 方法２：Cookieベースの認証（代替方法）
-
-ブラウザの開発者ツールなどを使用して、note.comにログインした際のCookie情報を取得し、`.env`ファイルに設定します：
+#### 方法２：Cookieベースの認証（代替方法、非推奨
+ブラウザの開発者ツールなどを使用して、note.comにログインした際のCookie情報を取得し、`.env`ファイルに設定します。
 
 ```env
 NOTE_SESSION_V5=your_session_v5_cookie_value
@@ -142,23 +141,54 @@ NOTE_USER_ID=your_note_user_id
    - macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
    - Windows: `%APPDATA%\Claude\claude_desktop_config.json`
 
-3. 設定ファイルに以下の内容を追加（`cwd` のパスは実際のプロジェクトの場所に置き換えてください）:
+3. 設定ファイルに以下の内容を追加します:
 
-   開発用（`npm run dev` を使用し、プロジェクトルートの `.env` ファイルを自動で読み込む場合）:
+   #### 方法１：設定ファイルに直接認証情報を記述（推奨）
+
    ```json
    {
      "mcpServers": {
-       "noteMCP_dev": {
-         "command": "npm",
-         "args": ["run", "dev"],
-         "cwd": "/path/to/your/note-mcp-server", // あなたがクローンしたプロジェクトのルートパス
-         "mcp_version": "0.0.1"
+       "note-api": {
+         "command": "node",
+         "args": [
+           "/path/to/noteMCP/build/note-mcp-server-refactored.js"
+         ],
+         "env": {
+           "NOTE_EMAIL": "note.comのメールアドレス",
+           "NOTE_PASSWORD": "note.comのパスワード",
+           "NOTE_USER_ID": "あなたのuser ID"
+         }
        }
      }
    }
    ```
 
-   本番用（`npm run start` を使用し、ビルドされたファイルを実行する場合。同様に `.env` を読み込みます）:
+   Cookie認証を利用する場合は以下のように設定します:
+
+   ```json
+   {
+     "mcpServers": {
+       "note-api": {
+         "command": "node",
+         "args": [
+           "/path/to/noteMCP/build/note-mcp-server-refactored.js"
+         ],
+         "env": {
+           "NOTE_SESSION_V5": "あなたのセッションv5トークン",
+           "NOTE_XSRF_TOKEN": "あなたのxsrfトークン",
+           "NOTE_USER_ID": "あなたのuser ID"
+         }
+       }
+     }
+   }
+   ```
+
+   **注意**: `/path/to/noteMCP` は、あなたがこのプロジェクトをクローンした実際の絶対パスに置き換えてください。
+
+   #### 方法２：.envファイルを使用（上級者向け）
+
+   この方法では、先に作成した`.env`ファイルを使用します。設定ファイルにはプロジェクトの場所のみを指定します。
+
    ```json
    {
      "mcpServers": {
@@ -171,16 +201,82 @@ NOTE_USER_ID=your_note_user_id
      }
    }
    ```
+
    **注意**: 
-   - 上記の `/path/to/your/note-mcp-server` は、あなたがこのプロジェクトをクローンした実際の絶対パスに置き換えてください。
-   - この設定により、サーバーはプロジェクトルートの `.env` ファイルから環境変数を読み込みます。Claude Desktopの設定ファイル内で直接 `env` ブロックに認証情報を記述する必要はありません。
-   - もし特定の環境変数をClaude Desktop側から上書きしたい場合は、`env` ブロックを追加することも可能です。
+   - この方法では、サーバーがプロジェクトルートの`.env`ファイルから環境変数を自動的に読み込みます。
+   - この方法は、ターミナル操作に慣れている方向けです。
 
 4. Claude Desktopを再起動
 
+### Cursorでの連携
+
+1. Cursorをインストールして起動
+
+2. CursorのMCP設定ファイルを開く
+   - macOS: `~/.cursor/mcp.json`
+   - Windows: `%APPDATA%\.cursor\mcp.json`
+もしくはCursor settingsを開き、MCP設定画面を開いてから、Add new global MCP serverを押します。
+
+3. 設定ファイルに以下の内容を追加します
+
+   ```json
+   {
+     "mcpServers": {
+       "note-api": {
+         "command": "node",
+         "args": [
+           "/path/to/noteMCP/build/note-mcp-server-refactored.js"
+         ],
+         "env": {
+           "NOTE_EMAIL": "note.comのメールアドレス",
+           "NOTE_PASSWORD": "note.comのパスワード",
+           "NOTE_USER_ID": "あなたのuser ID"
+         }
+       }
+     }
+   }
+   ```
+
+   **注意**: `/path/to/noteMCP` は、あなたがこのプロジェクトをクローンした実際の絶対パスに置き換えてください。
+
+4. Cursorを再起動
+
+### Windsurfでの連携
+
+1. Windsurfをインストールして起動
+
+2. WindsurfのMCP設定ファイルを開く
+   - macOS: `~/.codeium/windsurf/mcp_config.json`
+   - Windows: `%APPDATA%\.codeium\windsurf\mcp_config.json`
+もしくはWindsurf settingsを開き、Manage Pluginsを開いてから、View Raw Configを押します。
+
+3. 設定ファイルに以下の内容を追加します
+
+   ```json
+   {
+     "mcpServers": {
+       "note-api": {
+         "command": "node",
+         "args": [
+           "/path/to/noteMCP/build/note-mcp-server-refactored.js"
+         ],
+         "env": {
+           "NOTE_EMAIL": "note.comのメールアドレス",
+           "NOTE_PASSWORD": "note.comのパスワード",
+           "NOTE_USER_ID": "あなたのuser ID"
+         }
+       }
+     }
+   }
+   ```
+
+   **注意**: `/path/to/noteMCP` は、あなたがこのプロジェクトをクローンした実際の絶対パスに置き換えてください。
+
+4. Windsurfを再起動
+
 ## 使い方
 
-以下のようなクエリをClaude Desktopで試すことができます：
+以下のようなクエリをClaude Desktopで試すことができます。
 
 ### 検索と閲覧（認証不要）
 - 「noteで『プログラミング』に関する人気記事を検索して」
@@ -189,11 +285,7 @@ NOTE_USER_ID=your_note_user_id
 - 「noteでプログラミングに興味があるユーザーとハッシュタグを全体検索して」
 - 「プログラミングに関する記事を詳細分析して、エンゲージメントの傾向を教えて」
 
-### アイデア生成（認証不要）
-- 「マーケティングについての記事のアイデアを5つ考えて」
-- 「プログラミングに関する記事を書きたいので、アウトラインを考えて」
-
-### 認証ありの場合のみ使える機能：
+### 認証ありの場合のみ使える機能
 - 「私のnoteの下書き記事一覧を取得して」
 - 「下書き記事のID: n12345の編集ページを開きたい」
 - 「タイトル『テスト記事』、本文『これはテストです』で下書き記事を作成して」
@@ -203,7 +295,7 @@ NOTE_USER_ID=your_note_user_id
 
 ## 利用可能なツール
 
-このMCPサーバーでは以下のツールが利用できます：
+このMCPサーバーでは以下のツールが利用できます。
 
 ### 検索関連（認証なしで利用可能）
 - **search-notes**: キーワードで記事を検索（ソート順は `sort` パラメータで指定可能）
@@ -245,15 +337,15 @@ NOTE_USER_ID=your_note_user_id
 
 ## 制限事項と注意点
 
-このMCPサーバーには以下の制限事項があります：
+このMCPサーバーには以下の制限事項があります。
 
 ### APIの制限
 
-- **下書き保存機能（post-draft-note）**: note.comのAPI変更により、下書き保存のAPIエンドポイントが変更されることがあります。保存エラーが発生した場合は、エラーメッセージを確認してください。
+- **下書き保存機能（post-draft-note）**: まだ未実装です。
 
 - **検索結果の上限**: 単一の検索リクエストで取得できる結果は最大20件程度です。より多くの結果を取得する場合は、`start`パラメータを使用してページネーションを行ってください。
 
-- **認証情報の更新**: Cookieベースの認証を使用している場合、Cookieの有効期限（1～2週間程度）が切れると認証が必要な機能が使えなくなります。定期的にCookie値を更新してください。
+- **認証情報の更新**: Cookieベースの認証を使用している場合、Cookieの有効期限（1～2週間程度）が切れると認証が必要な機能が使えなくなります。定期的にCookie値を更新するか、ログイン認証を利用してください。
 
 ### 機能の制限
 
