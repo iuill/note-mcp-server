@@ -181,6 +181,7 @@ interface NoteApiResponse {
 // 整形済みデータの型定義
 interface FormattedNote {
   id: string;
+  key?: string;
   title: string;
   excerpt?: string;
   body?: string;
@@ -195,7 +196,12 @@ interface FormattedNote {
   likesCount: number;
   commentsCount?: number;
   status?: string;
+  isDraft?: boolean;
+  format?: string;
   url: string;
+  editUrl?: string;
+  hasDraftContent?: boolean;
+  lastUpdated?: string;
 }
 
 interface FormattedUser {
@@ -208,6 +214,7 @@ interface FormattedUser {
   notesCount: number;
   magazinesCount?: number;
   url: string;
+  profileImageUrl?: string;
 }
 
 interface FormattedMagazine {
@@ -490,12 +497,12 @@ async function noteApiRequest(path: string, method: string = "GET", body: any = 
     throw error;
   }
 }
-
-// 認証状態を確認する関数
 function hasAuth() {
   // 動的に取得したセッションCookieを優先的にチェック
   return activeSessionCookie !== null || AUTH_STATUS.anyAuth;
 }
+
+// 検索と分析ツールを拡張
 
 // 1. 記事検索ツール
 server.tool(
@@ -505,11 +512,12 @@ server.tool(
     query: z.string().describe("検索キーワード"),
     size: z.number().default(10).describe("取得する件数（最大20）"),
     start: z.number().default(0).describe("検索結果の開始位置"),
+    sort: z.enum(["new", "popular", "hot"]).default("hot").describe("ソート順（new: 新着順, popular: 人気順, hot: 急上昇）"),
   },
-  async ({ query, size, start }) => {
+  async ({ query, size, start, sort }) => {
     try {
       // 記事検索はv3を使用
-      const data = await noteApiRequest(`/v3/searches?context=note&q=${encodeURIComponent(query)}&size=${size}&start=${start}`);
+      const data = await noteApiRequest(`/v3/searches?context=note&q=${encodeURIComponent(query)}&size=${size}&start=${start}&sort=${sort}`);
 
       // デバッグ用：APIレスポンスの詳細な構造を確認
       console.error(`API Response structure for search-notes: ${JSON.stringify(data, null, 2)}`);
@@ -612,6 +620,258 @@ server.tool(
   }
 );
 
+// 1.5 記事分析ツール
+server.tool(
+  "analyze-notes",
+  "記事の詳細分析を行う（競合分析やコンテンツ成果の比較等）",
+  {
+    query: z.string().describe("検索キーワード"),
+    size: z.number().default(20).describe("取得する件数（分析に十分なデータ量を確保するため、初期値は多め）"),
+    start: z.number().default(0).describe("検索結果の開始位置"),
+    sort: z.enum(["new", "popular", "hot"]).default("popular").describe("ソート順（new: 新着順, popular: 人気順, hot: 急上昇）"),
+    includeUserDetails: z.boolean().default(true).describe("著者情報を詳細に含めるかどうか"),
+    analyzeContent: z.boolean().default(true).describe("コンテンツの特徴（画像数、アイキャッチの有無など）を分析するか"),
+    category: z.string().optional().describe("特定のカテゴリに絞り込む（オプション）"),
+    dateRange: z.string().optional().describe("日付範囲で絞り込む（例: 7d=7日以内、2m=2ヶ月以内）"),
+    priceRange: z.enum(["all", "free", "paid"]).default("all").describe("価格帯（all: 全て, free: 無料のみ, paid: 有料のみ）"),
+  },
+  async ({ query, size, start, sort, includeUserDetails, analyzeContent, category, dateRange, priceRange }) => {
+    try {
+      // 検索クエリーの構築
+      const params = new URLSearchParams({
+        q: query,
+        size: size.toString(),
+        start: start.toString(),
+        sort: sort
+      });
+      
+      // カテゴリが指定されていれば追加
+      if (category) {
+        params.append("category", category);
+      }
+      
+      // 日付範囲が指定されていれば追加
+      if (dateRange) {
+        params.append("date_range", dateRange);
+      }
+      
+      // 価格フィルターの追加
+      if (priceRange !== "all") {
+        params.append("price", priceRange);
+      }
+
+      // APIリクエストを実行
+      const data = await noteApiRequest(`/v3/searches?context=note&${params.toString()}`);
+      
+      if (DEBUG) {
+        console.error(`API Response structure for analyze-notes: ${JSON.stringify(data, null, 2)}`);
+      }
+
+      // 結果を見やすく整形
+      if (!data || !data.data) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `APIレスポンスが空です: ${JSON.stringify(data)}`
+            }
+          ]
+        };
+      }
+
+      // APIがエラーを返した場合
+      if (data.status === "error" || data.error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `APIエラー: ${JSON.stringify(data)}`
+            }
+          ],
+          isError: true
+        };
+      }
+
+      // 検索結果の処理
+      try {
+        let formattedNotes = [];
+        let notesArray = [];
+        let totalCount = 0;
+        
+        // v3: data.data.notes may contain contents and total_count
+        if (data.data.notes && Array.isArray((data.data.notes as any).contents)) {
+          notesArray = (data.data.notes as any).contents;
+          totalCount = (data.data.notes as any).total_count || 0;
+        } else if (Array.isArray(data.data.notes)) {
+          notesArray = data.data.notes;
+          totalCount = data.data.notesCount || notesArray.length;
+        } else if (Array.isArray(data.data.contents)) {
+          // fallback: direct contents list
+          notesArray = data.data.contents
+            .filter((item: any) => item.type === 'note')
+            .map((item: any) => item.note || item);
+          totalCount = data.data.notesCount || notesArray.length;
+        } else {
+          console.error(`Unexpected search data keys: ${Object.keys(data.data)}`);
+        }
+        
+        // 記事を詳細に分析してフォーマット
+        formattedNotes = notesArray.map((note: any) => {
+          // ユーザー情報の抽出と整形
+          const user = note.user || {};
+          
+          // コンテンツ分析用データの整形
+          const hasEyecatch = Boolean(note.eyecatch || note.sp_eyecatch);
+          const imageCount = note.image_count || (note.pictures ? note.pictures.length : 0);
+          const price = note.price || 0;
+          const isPaid = price > 0;
+          const publishDate = note.publish_at ? new Date(note.publish_at) : null;
+          
+          // 基本情報の整形
+          return {
+            // 記事基本情報
+            id: note.id || "",
+            key: note.key || "",
+            title: note.name || "",
+            type: note.type || "TextNote",
+            status: note.status || "published",
+            publishedAt: note.publish_at || "",
+            url: `https://note.com/${user.urlname || 'unknown'}/n/${note.key || ''}`,
+            // エンゲージメント情報
+            likesCount: note.like_count || 0,
+            commentsCount: note.comment_count || 0,
+            // 実際の閲覧数が利用可能であれば追加
+            viewCount: note.view_count,
+            // コンテンツ分析情報
+            contentAnalysis: analyzeContent ? {
+              hasEyecatch,
+              eyecatchUrl: note.eyecatch || note.sp_eyecatch || null,
+              imageCount,
+              hasVideo: note.type === "MovieNote" || Boolean(note.external_url),
+              externalUrl: note.external_url || null,
+              excerpt: note.body ? (note.body.length > 150 ? note.body.substr(0, 150) + '...' : note.body) : '',
+              hasAudio: Boolean(note.audio),
+              format: note.format || "unknown",
+              highlightText: note.highlight || null
+            } : null,
+            // 価格情報
+            price,
+            isPaid,
+            priceInfo: note.price_info || {
+              is_free: price === 0,
+              has_multiple: false,
+              has_subscription: false,
+              oneshot_lowest_price: price
+            },
+            // 設定情報
+            settings: {
+              isLimited: note.is_limited || false,
+              isTrial: note.is_trial || false,
+              disableComment: note.disable_comment || false,
+              isRefund: note.is_refund || false,
+              isMembershipConnected: note.is_membership_connected || false,
+              hasAvailableCirclePlans: note.has_available_circle_plans || false
+            },
+            // 著者情報
+            author: {
+              id: user.id || "",
+              name: user.name || user.nickname || "",
+              urlname: user.urlname || "",
+              profileImageUrl: user.user_profile_image_path || "",
+              // 詳細情報はオプションで制御
+              details: includeUserDetails ? {
+                followerCount: user.follower_count || 0,
+                followingCount: user.following_count || 0,
+                noteCount: user.note_count || 0,
+                profile: user.profile || "",
+                twitterConnected: Boolean(user.twitter_nickname),
+                twitterNickname: user.twitter_nickname || null,
+                isOfficial: user.is_official || false,
+                hasCustomDomain: Boolean(user.custom_domain),
+                hasLikeAppeal: Boolean(user.like_appeal_text || user.like_appeal_image),
+                hasFollowAppeal: Boolean(user.follow_appeal_text)
+              } : null
+            }
+          };
+        });
+
+        // 分析結果の集計
+        const analytics = {
+          totalFound: totalCount,
+          analyzed: formattedNotes.length,
+          query,
+          sort,
+          // エンゲージメント分析
+          engagementAnalysis: {
+            averageLikes: formattedNotes.reduce((sum: number, note: any) => sum + note.likesCount, 0) / formattedNotes.length || 0,
+            averageComments: formattedNotes.reduce((sum: number, note: any) => sum + note.commentsCount, 0) / formattedNotes.length || 0,
+            maxLikes: Math.max(...formattedNotes.map((note: any) => note.likesCount)),
+            maxComments: Math.max(...formattedNotes.map((note: any) => note.commentsCount))
+          },
+          // コンテンツタイプ分析
+          contentTypeAnalysis: analyzeContent ? {
+            withEyecatch: formattedNotes.filter((note: any) => note.contentAnalysis?.hasEyecatch).length,
+            withVideo: formattedNotes.filter((note: any) => note.contentAnalysis?.hasVideo).length,
+            withAudio: formattedNotes.filter((note: any) => note.contentAnalysis?.hasAudio).length,
+            averageImageCount: formattedNotes.reduce((sum: number, note: any) => sum + (note.contentAnalysis?.imageCount || 0), 0) / formattedNotes.length || 0
+          } : null,
+          // 価格分析
+          priceAnalysis: {
+            free: formattedNotes.filter((note: any) => !note.isPaid).length,
+            paid: formattedNotes.filter((note: any) => note.isPaid).length,
+            averagePrice: formattedNotes.filter((note: any) => note.isPaid).reduce((sum: number, note: any) => sum + note.price, 0) / 
+                          formattedNotes.filter((note: any) => note.isPaid).length || 0,
+            maxPrice: Math.max(...formattedNotes.map((note: any) => note.price)),
+            minPrice: Math.min(...formattedNotes.filter((note: any) => note.isPaid).map((note: any) => note.price)) || 0
+          },
+          // 著者分析
+          authorAnalysis: includeUserDetails ? {
+            uniqueAuthors: [...new Set(formattedNotes.map((note: any) => note.author.id))].length,
+            averageFollowers: formattedNotes.reduce((sum: number, note: any) => sum + (note.author.details?.followerCount || 0), 0) / formattedNotes.length || 0,
+            maxFollowers: Math.max(...formattedNotes.map((note: any) => note.author.details?.followerCount || 0)),
+            officialAccounts: formattedNotes.filter((note: any) => note.author.details?.isOfficial).length,
+            withTwitterConnection: formattedNotes.filter((note: any) => note.author.details?.twitterConnected).length,
+            withCustomEngagement: formattedNotes.filter((note: any) => 
+              note.author.details?.hasLikeAppeal || note.author.details?.hasFollowAppeal).length
+          } : null
+        };
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                analytics,
+                notes: formattedNotes
+              }, null, 2)
+            }
+          ]
+        };
+      } catch (formatError) {
+        console.error(`Error formatting analysis: ${formatError}`);
+        return {
+          content: [
+            {
+              type: "text",
+              text: `データの分析中にエラーが発生しました: ${formatError}\n元データ: ${JSON.stringify(data)}`
+            }
+          ]
+        };
+      }
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `分析に失敗しました: ${error}`
+          }
+        ],
+        isError: true
+      };
+    }
+  }
+);
+
 // 2. 記事詳細取得ツール
 server.tool(
   "get-note",
@@ -621,9 +881,20 @@ server.tool(
   },
   async ({ noteId }) => {
     try {
-      // v3からv2にバージョンを変更してみる実験的対応
-      const data = await noteApiRequest(`/v2/notes/${noteId}`);
-      // 元のバージョン: const data = await noteApiRequest(`/v3/notes/${noteId}`);
+      // 下書き記事も取得できるように対応
+      const params = new URLSearchParams({
+        draft: "true",
+        draft_reedit: "false",
+        ts: Date.now().toString()
+      });
+      
+      // APIのバージョンをv3に戻し、下書きパラメータを追加
+      const data = await noteApiRequest(
+        `/v3/notes/${noteId}?${params.toString()}`, 
+        "GET",
+        null,
+        true // 認証必須
+      );
 
       // 結果を見やすく整形
       const noteData = data.data || {};
@@ -733,16 +1004,25 @@ server.tool(
 
       // 結果を見やすく整形
       const userData = data.data || {};
+      
+      // デバッグモードの場合はレスポンス全体をログに出力
+      if (DEBUG) {
+        console.error(`User API Response: ${JSON.stringify(data, null, 2)}`);
+      }
+      
+      // APIレスポンスの中で、フォロワー数のプロパティ名は followerCount (単数形) を使用
       const formattedUser: FormattedUser = {
         id: userData.id || "",
         nickname: userData.nickname || "",
         urlname: userData.urlname || "",
         bio: userData.profile?.bio || '',
-        followersCount: userData.followersCount || 0,
+        // 両方のプロパティ名をチェックする
+        followersCount: userData.followerCount || userData.followersCount || 0,
         followingCount: userData.followingCount || 0,
-        notesCount: userData.notesCount || 0,
-        magazinesCount: userData.magazinesCount || 0,
-        url: `https://note.com/${userData.urlname || ''}`
+        notesCount: userData.noteCount || userData.notesCount || 0,
+        magazinesCount: userData.magazineCount || userData.magazinesCount || 0,
+        url: `https://note.com/${userData.urlname || ''}`,
+        profileImageUrl: userData.profileImageUrl || ''
       };
 
       return {
@@ -894,21 +1174,33 @@ server.tool(
       // リクエスト内容をログに出力
       console.error("下書き保存リクエスト内容:");
 
-      // 試行1: 基本的なプロパティのみ
+      // 試行1: 最新のAPI形式で試行
       try {
-        console.error("試行1: 基本的なプロパティのみ");
+        console.error("試行1: 最新のAPI形式");
+        // v3のAPI形式に合わせて修正
         const postData1 = {
-          name: title,
-          body: body,
-          tagNames: tags || [],
+          title: title,           // タイトル
+          body: body,            // 本文
+          status: "draft",       // 下書きステータス
+          tags: tags || [],      // タグ配列
+          publish_at: null,      // 公開日時（下書きはヌル）
+          eyecatch_image: null,  // アイキャッチ画像
+          price: 0,              // 価格（無料）
+          is_magazine_note: false // マガジン記事かどうか
         };
 
         console.error(`リクエスト内容: ${JSON.stringify(postData1, null, 2)}`);
 
-        // ユーザーIDを指定してリクエストを行うように変更
-        const endpoint = id
-          ? `/v2/notes/${id}/draft`   // v3からv2に変更
-          : `/v2/users/${NOTE_USER_ID}/notes/draft`;  // ユーザーIDを含む新形式
+        // 最新のAPIエンドポイントを使用する
+        // v3のAPIを使用して下書きを保存
+        let endpoint = "";
+        if (id) {
+          // 既存記事の編集
+          endpoint = `/v3/notes/${id}/draft`;
+        } else {
+          // 新規下書きの作成
+          endpoint = `/v3/notes/draft`;
+        }
 
         const data = await noteApiRequest(endpoint, "POST", postData1, true);
         console.error(`成功: ${JSON.stringify(data, null, 2)}`);
@@ -2271,6 +2563,323 @@ server.tool(
           {
             type: "text",
             text: `メンバーシップ記事取得エラー: ${error}`
+          }
+        ],
+        isError: true
+      };
+    }
+  }
+);
+
+// 自分の記事一覧（下書きを含む）取得ツール
+server.tool(
+  "get-my-notes",
+  "自分の記事一覧（下書きを含む）を取得する",
+  {
+    page: z.number().default(1).describe("ページ番号（デフォルト: 1）"),
+    perPage: z.number().default(20).describe("1ページあたりの表示件数（デフォルト: 20）"),
+    status: z.enum(["all", "draft", "public"]).default("all").describe("記事の状態フィルター（all:すべて, draft:下書きのみ, public:公開済みのみ）"),
+  },
+  async ({ page, perPage, status }) => {
+    try {
+      if (!NOTE_USER_ID) {
+        return {
+          content: [{ type: "text", text: "環境変数 NOTE_USER_ID が設定されていません。.envファイルを確認してください。" }],
+          isError: true
+        };
+      }
+
+      // 記事一覧を取得するパラメータを設定
+      const params = new URLSearchParams({
+        page: page.toString(),
+        per_page: perPage.toString(),
+        draft: "true", // 下書きも含める
+        draft_reedit: "false", // 再編集モードは含めない
+        ts: Date.now().toString()
+      });
+
+      // status フィルターの適用
+      if (status === "draft") {
+        params.set("status", "draft");
+      } else if (status === "public") {
+        params.set("status", "public");
+      }
+
+      // 自分の記事一覧を取得
+      // APIパスから重複する "api/" を除去
+      // API_BASE_URLはすでに "https://note.com/api" を含んでいる
+      const data = await noteApiRequest(
+        `/v2/note_list/contents?${params.toString()}`,
+        "GET",
+        null,
+        true // 認証必須
+      );
+
+      if (DEBUG) {
+        console.error(`API Response: ${JSON.stringify(data, null, 2)}`);
+      }
+
+      // 結果を見やすく整形
+      let formattedNotes: FormattedNote[] = [];
+      let totalCount = 0;
+      let currentPage = 1; // デフォルトは1ページ目
+
+      if (data.data) {
+        // notes配列がある場合、そこから記事情報を取得
+        if (data.data.notes && Array.isArray(data.data.notes)) {
+          formattedNotes = data.data.notes.map((note: any) => {
+            // 下書きステータスの確認
+            const isDraft = note.status === "draft";
+            const noteKey = note.key || "";
+            const noteId = note.id || "";
+            
+            // 下書き記事のタイトルと本文は noteDraft プロパティにある場合がある
+            const draftTitle = note.noteDraft?.name || "";
+            const title = note.name || draftTitle || "(無題)";
+            
+            // 本文プレビューの取得
+            let excerpt = "";
+            if (note.body) {
+              excerpt = note.body.length > 100 ? note.body.substring(0, 100) + '...' : note.body;
+            } else if (note.peekBody) {
+              excerpt = note.peekBody;
+            } else if (note.noteDraft?.body) {
+              // HTMLタグを除去する簡易的な方法（Node.js環境用）
+              // 正規表現を使用してHTMLタグを除去
+              const textContent = note.noteDraft.body
+                ? note.noteDraft.body.replace(/<[^>]*>/g, '') // HTMLタグを除去
+                : "";
+              excerpt = textContent.length > 100 ? textContent.substring(0, 100) + '...' : textContent;
+            }
+            
+            // 日付情報の取得
+            const publishedAt = note.publishAt || note.publish_at || note.displayDate || note.createdAt || '日付不明';
+            
+            return {
+              id: noteId,
+              key: noteKey,
+              title: title,
+              excerpt: excerpt,
+              publishedAt: publishedAt,
+              likesCount: note.likeCount || 0,
+              commentsCount: note.commentsCount || 0,
+              status: note.status || "unknown",
+              isDraft: isDraft,
+              format: note.format || "", // 記事フォーマットバージョン
+              url: `https://note.com/${NOTE_USER_ID}/n/${noteKey}`,
+              editUrl: `https://note.com/${NOTE_USER_ID}/n/${noteKey}/edit`,
+              hasDraftContent: note.noteDraft ? true : false, // 下書き内容があるかどうか
+              lastUpdated: note.noteDraft?.updatedAt || note.createdAt || "", // 最終更新日時
+              user: {
+                id: note.user?.id || NOTE_USER_ID,
+                name: note.user?.name || note.user?.nickname || "",
+                urlname: note.user?.urlname || NOTE_USER_ID
+              }
+            };
+          });
+        }
+
+        // 総件数とページ番号
+        totalCount = data.data.totalCount || 0;
+        // クエリパラメータから現在のページ番号を取得
+        currentPage = page;
+      }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              total: totalCount,
+              page: currentPage,
+              perPage: perPage,
+              status: status,
+              totalPages: Math.ceil(totalCount / perPage),
+              hasNextPage: currentPage * perPage < totalCount,
+              hasPreviousPage: currentPage > 1,
+              draftCount: formattedNotes.filter(note => note.isDraft).length,
+              publicCount: formattedNotes.filter(note => !note.isDraft).length,
+              notes: formattedNotes
+            }, null, 2)
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `記事一覧の取得に失敗しました: ${error}`
+          }
+        ],
+        isError: true
+      };
+    }
+  }
+);
+
+// 記事編集ページを開くツール
+server.tool(
+  "open-note-editor",
+  "記事の編集ページを開く",
+  {
+    noteId: z.string().describe("記事ID（例: n1a2b3c4d5e6）"),
+  },
+  async ({ noteId }) => {
+    try {
+      if (!NOTE_USER_ID) {
+        return {
+          content: [{ type: "text", text: "環境変数 NOTE_USER_ID が設定されていません。.envファイルを確認してください。" }],
+          isError: true
+        };
+      }
+
+      // noteIdからキーを抽出（必要に応じて）
+      let noteKey = noteId;
+      if (noteId.startsWith('n')) {
+        noteKey = noteId;
+      }
+
+      // 編集URLを生成
+      const editUrl = `https://note.com/${NOTE_USER_ID}/n/${noteKey}/edit`;
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              status: "success",
+              editUrl: editUrl,
+              message: `編集ページのURLを生成しました。以下のURLを開いてください：\n${editUrl}`
+            }, null, 2)
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `編集ページURLの生成に失敗しました: ${error}`
+          }
+        ],
+        isError: true
+      };
+    }
+  }
+);
+
+// 全体検索ツール
+server.tool(
+  "search-all",
+  "note全体検索（ユーザー、ハッシュタグ、記事など）",
+  {
+    query: z.string().describe("検索キーワード"),
+    context: z.string().default("user,hashtag,note").describe("検索コンテキスト（user,hashtag,noteなどをカンマ区切りで指定）"),
+    mode: z.string().default("typeahead").describe("検索モード（typeaheadなど）"),
+    size: z.number().default(10).describe("取得する件数（最大5件）"),
+    sort: z.enum(["new", "popular", "hot"]).default("hot").describe("ソート順（new: 新着順, popular: 人気順, hot: 急上昇）"),
+  },
+  async ({ query, context, mode, size, sort }) => {
+    try {
+      // 認証なしで全体検索ができるか試す
+      // API_BASE_URLはすでに "https://note.com/api" を含むため、パスから重複する "api/" を除去
+      const data = await noteApiRequest(
+        `/v3/searches?context=${encodeURIComponent(context)}&mode=${encodeURIComponent(mode)}&q=${encodeURIComponent(query)}&size=${size}&sort=${sort}`,
+        "GET",
+        null,
+        false // 認証なしで試す
+      );
+
+      if (DEBUG) {
+        console.error(`API Response: ${JSON.stringify(data, null, 2)}`);
+      }
+
+      // 全体検索結果を整形
+      // 結果型を明示的に定義
+      const result: {
+        query: string;
+        context: string;
+        mode: string;
+        size: number;
+        results: {
+          users?: any[];
+          hashtags?: any[];
+          notes?: any[];
+          [key: string]: any;
+        };
+      } = {
+        query,
+        context,
+        mode,
+        size,
+        results: {}
+      };
+
+      // レスポンスのデータを整形
+      if (data.data) {
+        // ユーザー検索結果
+        if (data.data.users && Array.isArray(data.data.users)) {
+          result.results.users = data.data.users.map((user: any) => ({
+            id: user.id || "",
+            nickname: user.nickname || "",
+            urlname: user.urlname || "",
+            bio: user.profile?.bio || user.bio || "",
+            profileImageUrl: user.profileImageUrl || "",
+            url: `https://note.com/${user.urlname || ''}`
+          }));
+        }
+
+        // ハッシュタグ検索結果
+        if (data.data.hashtags && Array.isArray(data.data.hashtags)) {
+          result.results.hashtags = data.data.hashtags.map((tag: any) => ({
+            name: tag.name || "",
+            displayName: tag.displayName || tag.name || "",
+            url: `https://note.com/hashtag/${tag.name || ''}`
+          }));
+        }
+
+        // 記事検索結果
+        if (data.data.notes) {
+          // notesの型を確認して処理
+          let notesArray: any[] = [];
+          
+          if (Array.isArray(data.data.notes)) {
+            // notesが配列の場合
+            notesArray = data.data.notes;
+          } else if (typeof data.data.notes === 'object' && data.data.notes !== null) {
+            // notesがオブジェクトで、contentsプロパティを持つ場合
+            const notesObj = data.data.notes as { contents?: any[] };
+            if (notesObj.contents && Array.isArray(notesObj.contents)) {
+              notesArray = notesObj.contents;
+            }
+          }
+          
+          result.results.notes = notesArray.map((note: any) => ({
+            id: note.id || "",
+            title: note.name || note.title || "",
+            excerpt: note.body ? (note.body.length > 100 ? note.body.substring(0, 100) + '...' : note.body) : '',
+            user: note.user?.nickname || 'unknown',
+            publishedAt: note.publishAt || note.publish_at || '',
+            url: `https://note.com/${note.user?.urlname || 'unknown'}/n/${note.key || ''}`
+          }));
+        }
+      }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(result, null, 2)
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `検索に失敗しました: ${error}`
           }
         ],
         isError: true
