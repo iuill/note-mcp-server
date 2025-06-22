@@ -5,6 +5,25 @@
 - stdioからstreamable Httpに変更（refactored版のみ）
 - Dockerfileを追加
 
+## 実行方法
+
+```console
+docker build -t note-mcp-server .
+docker run -d -p 8080:3000 --name my-note-mcp-server note-mcp-server
+```
+
+## MCP Client設定例
+
+```json
+{
+  "mcpServers": {
+    "note-mcp-server":{
+      "url": "http://localhost:8080/mcp",
+      "type": "streamable-http"
+    }
+  }
+}
+```
 
 ----
 
