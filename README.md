@@ -1,5 +1,13 @@
 # note.com MCP Server
 
+このリポジトリは `shimayuz/note-mcp-server` から以下の変更を行っています。
+
+- stdioからstreamable Httpに変更（refactored版のみ）
+- Dockerfileを追加
+
+
+----
+
 このMCPサーバーは、note.comのAPIを利用して記事の閲覧や投稿、ユーザー情報の取得などをClaude Desktopから実行できるようにするものです。
 
 ## ✨ リファクタリング完了（2025年5月30日）

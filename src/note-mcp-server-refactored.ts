@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import express, { Request, Response } from "express";
 
 // 設定とユーティリティ
 import { env, authStatus } from "./config/environment.js";
@@ -11,40 +12,27 @@ import { registerPrompts } from "./prompts/prompts.js";
 
 /**
  * ◤◢◤◢◤◢◤◢◤◢◤◢◤◢
- * note API MCP Server (Refactored)
+ * note API MCP Server (Refactored & HTTP)
  * 
- * 機能別に分割・リファクタリングされたnote API MCPサーバー
+ * 機能別に分割・リファクタリングされたnote API MCPサーバー (Streamable HTTP対応版)
  * - 設定管理の分離
  * - 型定義の整理
  * - 機能別ツール分割
  * - 共通ユーティリティの抽出
  * - エラーハンドリングの統一
+ * - Streamable HTTP Transport対応
  * ◤◢◤◢◤◢◤◢◤◢◤◢◤◢
  */
 
-// MCP サーバーインスタンスを作成
-const server = new McpServer({
-  name: "note-api",
-  version: "2.0.0"
-});
-
 /**
- * サーバーの初期化処理
+ * サーバーのコア初期化処理 (認証のみ)
  */
-async function initializeServer(): Promise<void> {
+async function initializeServerCore(): Promise<void> {
   console.error("◤◢◤◢◤◢◤◢◤◢◤◢◤◢");
-  console.error("🚀 note API MCP Server v2.0.0 を初期化中...");
+  console.error("🚀 note API MCP Server v2.1.0 コア初期化中...");
   console.error("◤◢◤◢◤◢◤◢◤◢◤◢◤◢");
 
-  // ツールの登録
-  console.error("📝 ツールを登録中...");
-  registerAllTools(server);
-  
-  // プロンプトの登録
-  console.error("💭 プロンプトを登録中...");
-  registerPrompts(server);
-
-  console.error("✅ ツールとプロンプトの登録が完了しました");
+  console.error("✅ コアコンポーネントの初期化が完了しました");
 }
 
 /**
@@ -55,7 +43,6 @@ async function performAuthentication(): Promise<void> {
   console.error("🔐 認証処理を実行中...");
   console.error("◤◢◤◢◤◢◤◢◤◢◤◢◤◢");
 
-  // 自動ログインの試行
   if (env.NOTE_EMAIL && env.NOTE_PASSWORD) {
     console.error("📧 メールアドレスとパスワードからログイン試行中...");
     const loginSuccess = await loginToNote();
@@ -66,7 +53,6 @@ async function performAuthentication(): Promise<void> {
     }
   }
 
-  // 認証状態の表示
   console.error("◤◢◤◢◤◢◤◢◤◢◤◢◤◢");
   if (authStatus.hasCookie || authStatus.anyAuth) {
     console.error("🔓 認証情報が設定されています");
@@ -80,28 +66,92 @@ async function performAuthentication(): Promise<void> {
 }
 
 /**
- * サーバーの起動
+ * Expressアプリケーションをセットアップし、MCPリクエストを処理するルーターを設定する。
  */
-async function startServer(): Promise<void> {
+async function setupExpressApp(): Promise<express.Express> {
+  const app = express();
+  app.use(express.json());
+
+  // MCPリクエストハンドラ
+  app.all("/mcp", async (req: Request, res: Response) => {
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+    });
+
+    // POSTメソッド以外は受付ない
+    if (req.method !== "POST") {
+      return res.status(405).json({
+        jsonrpc: "2.0",
+        error: {
+          code: -32000,
+          message: `Method not allowed: ${req.method}`,
+        },
+        id: null
+      });
+    }
+
+    // リクエストごとに新しいMCPサーバーインスタンスを作成
+    const requestServer = new McpServer({
+      name: "note-api-http",
+      version: "2.1.0"
+    });
+
+    try {
+      // ツールとプロンプトの登録
+      registerAllTools(requestServer);
+      registerPrompts(requestServer);
+
+      res.on('close', () => {
+        console.error('🔌 HTTP Request closed, cleaning up transport...');
+        transport.close();
+        requestServer.close();
+      });
+
+      await requestServer.connect(transport);
+      await transport.handleRequest(req, res, req.body);
+    } catch (error: any) {
+      console.error('💥 Error handling MCP request:', error);
+      if (!res.headersSent) {
+        res.status(500).json({
+          jsonrpc: '2.0',
+          error: {
+            code: -32603,
+            message: 'Internal server error',
+          },
+          id: null,
+        });
+      }
+    }
+  });
+
+  return app;
+}
+
+/**
+ * サーバーを起動するメイン関数
+ */
+async function main(): Promise<void> {
   try {
     console.error("◤◢◤◢◤◢◤◢◤◢◤◢◤◢");
-    console.error("🌟 note API MCP Server v2.0.0 を起動中...");
+    console.error("🌟 note API MCP Server v2.1.0 (HTTP) を起動準備中...");
     console.error("◤◢◤◢◤◢◤◢◤◢◤◢◤◢");
 
-    // サーバーの初期化
-    await initializeServer();
+    // 1. コア機能の初期化
+    await initializeServerCore();
     
-    // 認証処理
+    // 2. 認証処理
     await performAuthentication();
     
-    // STDIOトランスポートを作成して接続
-    console.error("🔌 STDIOトランスポートに接続中...");
-    const transport = new StdioServerTransport();
-    await server.connect(transport);
+    // 3. Expressアプリケーションのセットアップ
+    const app = await setupExpressApp();
     
+    // 4. HTTPサーバーの起動
+    const port = parseInt(env.HTTP_PORT || "3000", 10); // 環境変数からポート取得、デフォルト3000
+
+    app.listen(port, () => {
     console.error("◤◢◤◢◤◢◤◢◤◢◤◢◤◢");
-    console.error("🎉 note API MCP Server v2.0.0 が正常に起動しました!");
-    console.error("📡 STDIO transport で稼働中");
+      console.error(`🎉 note API MCP Server v2.1.0 が正常に起動しました!`);
+      console.error(`📡 Streamable HTTP transport で稼働中: http://localhost:${port}/mcp`);
     console.error("◤◢◤◢◤◢◤◢◤◢◤◢◤◢");
 
     // 利用可能な機能の概要表示
@@ -150,7 +200,23 @@ async function startServer(): Promise<void> {
     console.error("🎯 Ready for requests!");
     console.error("◤◢◤◢◤◢◤◢◤◢◤◢◤◢");
 
-  } catch (error) {
+      if (env.DEBUG) {
+        console.error("\n📂 デバッグ情報:");
+        console.error("  - 設定: src/config/");
+        console.error("  - 型定義: src/types/");
+        console.error("  - ユーティリティ: src/utils/");
+        console.error("  - ツール: src/tools/");
+        console.error("  - プロンプト: src/prompts/");
+      }
+    });
+
+    // graceful shutdown
+    process.on("SIGINT", async () => {
+      console.error("Shutting down server...");
+      process.exit(0);
+    });
+
+  } catch (error: any) {
     console.error("◤◢◤◢◤◢◤◢◤◢◤◢◤◢");
     console.error("💥 Fatal error during server startup:");
     console.error(error);
@@ -160,7 +226,7 @@ async function startServer(): Promise<void> {
 }
 
 // メイン処理の実行
-startServer().catch(error => {
+main().catch((error: any) => {
   console.error("◤◢◤◢◤◢◤◢◤◢◤◢◤◢");
   console.error("💥 Fatal error:");
   console.error(error);

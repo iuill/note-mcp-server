@@ -29,7 +29,7 @@ export function formatNote(
     id: note.id || "",
     key: note.key || "",
     title: note.name || "",
-    excerpt: note.body ? (note.body.length > 100 ? note.body.substring(0, 100) + '...' : note.body) : '本文なし',
+    body: note.body || "",
     publishedAt: note.publishAt || note.publish_at || '日付不明',
     likesCount: note.likeCount || note.like_count || 0,
     commentsCount: note.commentsCount || note.comment_count || 0,

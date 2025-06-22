@@ -17,6 +17,7 @@ export interface Environment {
   NOTE_EMAIL: string;
   NOTE_PASSWORD: string;
   NOTE_USER_ID: string;
+  HTTP_PORT?: string; // HTTP_PORTを追加 (オプショナル)
 }
 
 export const env: Environment = {
@@ -26,6 +27,7 @@ export const env: Environment = {
   NOTE_EMAIL: process.env.NOTE_EMAIL || "",
   NOTE_PASSWORD: process.env.NOTE_PASSWORD || "",
   NOTE_USER_ID: process.env.NOTE_USER_ID || "",
+  HTTP_PORT: process.env.HTTP_PORT, // 環境変数からHTTP_PORTを読み込む
 };
 
 // 認証状態の判定
